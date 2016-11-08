@@ -80,11 +80,12 @@ int main(int argc, char *argv[])
 #ifdef PROFILE
     STOP_SW(map_time);
 #endif
-
+/*
+    //check data 
     for (int i = 0; i < DATASIZE; i++)
         printf("%c", !!data[i] ? '-' : ' ');
     printf("\n");
-
+*/
 #ifdef PROFILE
     START_SW(reduce_time);
 #endif
@@ -109,6 +110,9 @@ int main(int argc, char *argv[])
     fprintf(stderr, "[is_simple] Total time: %lf\n", GET_SEC(simple_time));
     fprintf(stderr, "[reduce] Total time: %lf\n", GET_SEC(reduce_time));
 #endif
+
+    threadpool_destroy(pool , 0);
+    free(data);
 
     return 0;
 }
