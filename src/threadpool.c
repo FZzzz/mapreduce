@@ -31,6 +31,12 @@
  * @brief Threadpool implementation file
  */
 
+/**
+ * TODO : FIX REDUCE
+ */
+
+
+#include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
 #include <unistd.h>
@@ -77,6 +83,7 @@ struct threadpool_t {
     pthread_cond_t notify;
     pthread_t *threads;
     threadpool_task_t *queue;
+    //void *result_pos;
     int thread_count;
     int queue_size;
     int head;
@@ -133,6 +140,7 @@ threadpool_t *threadpool_create(int thread_count, int queue_size, int flags)
     }
 
     /* Start worker threads */
+    /* TODO: Lazy initialization */
     for(i = 0; i < thread_count; i++) {
         if(pthread_create(&(pool->threads[i]), NULL,
                           threadpool_thread, (void*)pool) != 0) {
@@ -147,10 +155,25 @@ threadpool_t *threadpool_create(int thread_count, int queue_size, int flags)
 
 err:
     if(pool) {
+        fprintf(stderr , "threadpool creation failed\n");
         threadpool_free(pool);
     }
     return NULL;
 }
+
+/*
+void threadpool_set_result_pos(threadpool_t *tpool , void *pos)
+{
+
+}
+
+void threadpool_merge_reduce()
+{
+    // merge all reduce result
+    // all local pos -> result pos
+    // need a struct to tell master where the data is
+}
+*/
 
 int threadpool_add(threadpool_t *pool, void (*function)(void *),
                    void *argument, int flags)
@@ -282,12 +305,14 @@ static void threadpool_map_thread(void *arg);
 int threadpool_map(threadpool_t *pool, int size, void(*routine)(int n, void *),
                    void *arg, int flags)
 {
+    //static int loops_on_wait = 0;
     threadpool_error_t err = 0;
     threadpool_map_t map = {
         .routine = routine,
         .arg = arg,
         .thread_count = pool->thread_count,
         .size = size,
+        //why global size here?
     };
 
     sem_init(&map.done_indicator, 0, 0);
@@ -296,11 +321,15 @@ int threadpool_map(threadpool_t *pool, int size, void(*routine)(int n, void *),
         map.personal_pointers[i] = i;
 
     for (int i = 0; i < pool->thread_count; i++) {
+        //detect error
         threadpool_error_t _err = threadpool_add(pool, threadpool_map_thread,
                                   &map.personal_pointers[i],
                                   flags);
-        /* FIXME: check errors correctly */
+        /* 
+            check task queue full
+        */
         if (_err == threadpool_queue_full) {
+            //if full then wait
             i--;
         } else if (_err) {
             err = _err;
@@ -308,18 +337,21 @@ int threadpool_map(threadpool_t *pool, int size, void(*routine)(int n, void *),
         }
     }
 
+    //wait threadpool_map_thread done 
     for (int i = 0; i < pool->thread_count; i++)
         sem_wait(&map.done_indicator);
 
     sem_destroy(&map.done_indicator);
+    //fprintf(stderr , "loops_on_wait: %d\n", loops_on_wait);
     return err;
 }
 
 typedef struct {
-    threadpool_reduce_t *userdata;
+    threadpool_reduce_t *reduce_data;
     int size;
     int thread_count;
     void *elements[THREADS_MAX];
+    // Q: why use pointer here?
 } reduce_t_internal;
 
 static void threadpool_reduce_thread(int n, void *arg);
@@ -330,19 +362,22 @@ int threadpool_reduce(threadpool_t *pool, threadpool_reduce_t *reduce)
         .size = ((char *) reduce->end -
         (char *) reduce->begin) / reduce->object_size,
         .thread_count = pool->thread_count,
-        .userdata = reduce,
+        .reduce_data = reduce,
     };
 
-    int err = threadpool_map(pool, pool->thread_count, threadpool_reduce_thread, &info, 0);
+    int err = threadpool_map(pool, info.thread_count, threadpool_reduce_thread, &info, 0);
     if (err) return err;
 
-    for (int i = 1; i < pool->thread_count; i++) {
-        info.userdata->reduce(info.userdata->self,
+    //run reduce
+    for (int i = 1; i < info.thread_count; i++) {
+        // merge all chunks into global one(in master)
+        // FIXME : return to real global data
+        info.reduce_data->reduce(info.reduce_data->additional,
                               info.elements[0], info.elements[i]);
-        info.userdata->reduce_free(info.userdata->self, info.elements[i]);
+        info.reduce_data->reduce_free(info.reduce_data->additional, info.elements[i]);
     }
-    info.userdata->reduce_finish(info.userdata->self, info.elements[0]);
-    info.userdata->reduce_free(info.userdata->self, info.elements[0]);
+    info.reduce_data->reduce_finish(info.reduce_data->additional, info.elements[0]);
+    info.reduce_data->reduce_free(info.reduce_data->additional, info.elements[0]);
     return 0;
 }
 
@@ -361,37 +396,48 @@ static void threadpool_reduce_thread(int n, void *arg)
     }
     end += start;
 
-    info->elements[n] = info->userdata->reduce_alloc_neutral(info->userdata);
+    info->elements[n] = info->reduce_data->reduce_alloc_neutral(info->reduce_data);
 
     for (; start < end; start++) {
-        info->userdata->reduce(info->userdata->self, info->elements[n],
-                               (char *) info->userdata->begin +
-                               start * info->userdata->object_size);
+        // my_reduce ( additional , left , right ) 
+        // FIXME : this should not use left and right
+        // tell the fuck position to master
+        info->reduce_data->reduce(info->reduce_data->additional, info->elements[n],
+                               (char *) info->reduce_data->begin +
+                               start * info->reduce_data->object_size);
     }
 }
 
 static void threadpool_map_thread(void *arg)
 {
+    // arg points to threadpool_map_t.personal_pointers[i]
     int id = *(int *) arg;
+    // use ((int *)arg - id) to get personal_pointers[0]
+    // => start of struct threadpool_map_t   
     threadpool_map_t *map = (threadpool_map_t *) ((int *) arg - id);
     int end = map->size / map->thread_count;
-    int additional_items = map->size - end * map->thread_count;
+    // it seems always zero here
+    int additional_items = map->size % map->thread_count;
     int start = end * id;
-
+    
     if (id <= additional_items)	{
         start += id;
-        if (id < additional_items) end++;
+        if (id < additional_items)
+            end++;
     } else {
         start += additional_items;
     }
+    //end of data block
     end += start;
-
+    //fprintf(stderr , "%d %d\n" , start, end);
+    //each thread excute routines in its own block
     for (; start < end; start++)
         map->routine(start, map->arg);
 
     sem_post(&map->done_indicator);
 }
 
+//worker thread
 static void *threadpool_thread(void *threadpool)
 {
     threadpool_t *pool = (threadpool_t *)threadpool;

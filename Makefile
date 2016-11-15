@@ -1,5 +1,6 @@
-CFLAGS := -D_REENTRANT -Wall -pedantic -Isrc
-CFLAGS += -fPIC
+CC = gcc
+CFLAGS := -D_REENTRANT -Wall -pedantic -Isrc -g
+CFLAGS += -fPIC 
 LDFLAGS = -lpthread -rdynamic
 
 LIBNAME = libthreadpool
@@ -34,7 +35,7 @@ TESTS =
 TESTS += tests/shutdown
 TESTS += tests/thrdtest
 TESTS += tests/heavy
-TESTS += tests/mapreduce
+TESTS += tests/is_simple
 
 $(LIBNAME)$(SHARED_SUFFIX): $(OBJS)
 	$(CC) -shared -o $@ $< ${LDLIBS}

@@ -113,15 +113,16 @@ int threadpool_map(threadpool_t *pool, int size,
 * @param self         user-specific data
 */
 typedef struct {
-    void (*reduce)(void *self, void *left, void *right);
-    void *(*reduce_alloc_neutral)(void *self);
-    void (*reduce_free)(void *self, void *node);
-    void (*reduce_finish)(void *self, void *node);
+    void (*reduce)(void *addional, void *left, void *right);
+    void *(*reduce_alloc_neutral)(void *additional);
+    void (*reduce_free)(void *additional, void *node);
+    void (*reduce_finish)(void *additional, void *node);
 
     int object_size;
     void *begin;
     void *end;
-    void *self;
+    void *result;
+    void *additional;
 } threadpool_reduce_t;
 
 /**
