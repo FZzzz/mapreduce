@@ -100,7 +100,7 @@ int threadpool_map(threadpool_t *pool, int size,
 /**
 * @struct threadpool_reduce_t
 * @brief arguments    for threadpool_reduce
-* @param reduce       perform reduce on 2 operands. save result in left
+* @param reduce       perform reduce on 2 operands. save result in result(local) 
 * @param reduce_alloc_neutral allocate object which is neutral for your reduce
 * operation
 * @param reduce_free  free object allocated with reduce_alloc_neutral.
@@ -110,13 +110,14 @@ int threadpool_map(threadpool_t *pool, int size,
 *                     increment and decrement pointers.
 * @param begin        first object for reduce
 * @param end          object after the last
-* @param self         user-specific data
+* @param additional   user-specific data
 */
 typedef struct {
-    void (*reduce)(void *addional, void *left, void *right);
+    void (*reduce)(void *addional, void *result, void *data);
+    void (*reduce_finish)(void *additional, void *result , void *local);
     void *(*reduce_alloc_neutral)(void *additional);
     void (*reduce_free)(void *additional, void *node);
-    void (*reduce_finish)(void *additional, void *node);
+    
 
     int object_size;
     void *begin;
@@ -125,6 +126,14 @@ typedef struct {
     void *additional;
 } threadpool_reduce_t;
 
+typedef enum{
+    reduce_reduce_not_set = -1,
+    reduce_alloc_not_set = -2,
+    reduce_free_not_set = -3,
+    reduce_finish_not_set = -4
+} mapreduce_err_t;
+
+
 /**
 * @function threadpool_reduce
 * @brief parallel blocking reduce
@@ -132,7 +141,8 @@ typedef struct {
 * @param reduce  Filled threadpool_reduce_t struct.
 * @return error code
 */
-int threadpool_reduce(threadpool_t *pool, threadpool_reduce_t *reduce);
+int threadpool_reduce(threadpool_t *pool);
+int threadpool_mapreduce_setup(threadpool_t *tpool , threadpool_reduce_t *reduce_spec);
 
 /**
  * @function threadpool_destroy

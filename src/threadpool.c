@@ -31,10 +31,6 @@
  * @brief Threadpool implementation file
  */
 
-/**
- * TODO : FIX REDUCE
- */
-
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -84,6 +80,7 @@ struct threadpool_t {
     pthread_t *threads;
     threadpool_task_t *queue;
     //void *result_pos;
+    threadpool_reduce_t *reduce_spec;
     int thread_count;
     int queue_size;
     int head;
@@ -161,19 +158,36 @@ err:
     return NULL;
 }
 
-/*
-void threadpool_set_result_pos(threadpool_t *tpool , void *pos)
+// REMIND: if we need more specification for any other phase we should update here
+// Check all setup is valid for our mapreduce framework
+int threadpool_mapreduce_setup(threadpool_t *tpool , threadpool_reduce_t *reduce_spec)
 {
+    //check reduce_spec validation
+    if( reduce_spec->reduce == NULL)
+    {
+        fprintf(stderr , "Do you forget to set reduce function?(Reduce funciton is null)\n");
+        return reduce_reduce_not_set;
+    }
+    if( reduce_spec->reduce_alloc_neutral == NULL )
+    {
+        fprintf(stderr , "Do you forget to set reduce alloc function?(Reduce alloc funciton is null)\n");
+        return reduce_alloc_not_set;
+    }
+    if( reduce_spec->reduce_free == NULL)
+    {
+        fprintf(stderr , "Do you forget to set reduce free function?(Reduce free funciton is null)\n");
+        return reduce_free_not_set;
+    }
+    if( reduce_spec->reduce_finish == NULL)
+    {
+        fprintf(stderr , "Do you forget to set reduce finish function?(Reduce finish funciton is null)\n");
+        return reduce_finish_not_set;
+    }
 
-}
+    tpool->reduce_spec = reduce_spec;
 
-void threadpool_merge_reduce()
-{
-    // merge all reduce result
-    // all local pos -> result pos
-    // need a struct to tell master where the data is
+    return 0;
 }
-*/
 
 int threadpool_add(threadpool_t *pool, void (*function)(void *),
                    void *argument, int flags)
@@ -312,7 +326,6 @@ int threadpool_map(threadpool_t *pool, int size, void(*routine)(int n, void *),
         .arg = arg,
         .thread_count = pool->thread_count,
         .size = size,
-        //why global size here?
     };
 
     sem_init(&map.done_indicator, 0, 0);
@@ -351,13 +364,14 @@ typedef struct {
     int size;
     int thread_count;
     void *elements[THREADS_MAX];
-    // Q: why use pointer here?
 } reduce_t_internal;
 
 static void threadpool_reduce_thread(int n, void *arg);
+static void threadpool_merge_reduce(reduce_t_internal* info);
 
-int threadpool_reduce(threadpool_t *pool, threadpool_reduce_t *reduce)
+int threadpool_reduce(threadpool_t *pool)
 {
+    threadpool_reduce_t *reduce = pool->reduce_spec;
     reduce_t_internal info = {
         .size = ((char *) reduce->end -
         (char *) reduce->begin) / reduce->object_size,
@@ -365,19 +379,12 @@ int threadpool_reduce(threadpool_t *pool, threadpool_reduce_t *reduce)
         .reduce_data = reduce,
     };
 
+    // real reduce task
     int err = threadpool_map(pool, info.thread_count, threadpool_reduce_thread, &info, 0);
     if (err) return err;
 
-    //run reduce
-    for (int i = 1; i < info.thread_count; i++) {
-        // merge all chunks into global one(in master)
-        // FIXME : return to real global data
-        info.reduce_data->reduce(info.reduce_data->additional,
-                              info.elements[0], info.elements[i]);
-        info.reduce_data->reduce_free(info.reduce_data->additional, info.elements[i]);
-    }
-    info.reduce_data->reduce_finish(info.reduce_data->additional, info.elements[0]);
-    info.reduce_data->reduce_free(info.reduce_data->additional, info.elements[0]);
+    threadpool_merge_reduce(&info);
+
     return 0;
 }
 
@@ -400,8 +407,6 @@ static void threadpool_reduce_thread(int n, void *arg)
 
     for (; start < end; start++) {
         // my_reduce ( additional , left , right ) 
-        // FIXME : this should not use left and right
-        // tell the fuck position to master
         info->reduce_data->reduce(info->reduce_data->additional, info->elements[n],
                                (char *) info->reduce_data->begin +
                                start * info->reduce_data->object_size);
@@ -478,3 +483,14 @@ static void *threadpool_thread(void *threadpool)
     pthread_exit(NULL);
     return(NULL);
 }
+
+static void threadpool_merge_reduce(reduce_t_internal *info)
+{
+    // merge all reduce result into global one(in master)
+    for (int i = 0; i < info->thread_count; i++) {
+        info->reduce_data->reduce_finish(info->reduce_data->additional,
+                              info->reduce_data->result , info->elements[i]);
+        info->reduce_data->reduce_free(info->reduce_data->additional, info->elements[i]);
+    }
+}
+
