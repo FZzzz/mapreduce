@@ -38,12 +38,18 @@ void is_simple(int n, void *_data)
 #endif
 }
 
-void my_reduce(void *additional, void *left, void *right)
+void my_reduce(void *additional, void *result, void *data)
 {
-    *((int *) left) += *((int *) right);
+    *((int *) result) += *((int *) data);
 }
 
-// managed by library
+void my_merge(void *additional , void *result , void *local)
+{
+    *((int *) result) += *((int *) local); 
+}
+
+// FIXME: should be provided default by library
+// allocate 'local' space for reduce phase
 void *my_alloc_neutral(void *additional)
 {
     int *c = malloc(sizeof(int));
@@ -51,6 +57,7 @@ void *my_alloc_neutral(void *additional)
     return c;
 }
 
+// FIXME: should be provided default by library
 // managed by library
 void my_free(void *additional, void *node)
 {
@@ -65,6 +72,7 @@ void my_finish(void *additional, void *node)
 
 int main(int argc, char *argv[])
 {
+    int my_result = 0;
     threadpool_t *pool;
 
     pool = threadpool_create(THREAD, QUEUE, 0);
@@ -77,6 +85,26 @@ int main(int argc, char *argv[])
         data[i] = i + 1;
     //data end
 
+    threadpool_reduce_t reduce_spec = {
+        .begin = data,
+        .end = data + DATASIZE,
+        .object_size = sizeof(*data),
+        .result = &my_result,
+        .additional = NULL,
+        .reduce = my_reduce,
+        .reduce_alloc_neutral = my_alloc_neutral,
+        .reduce_finish = my_merge,
+        .reduce_free = my_free,
+    };
+    
+    //setup and check , if not valid then shutdown whole program
+    if(threadpool_mapreduce_setup(pool , &reduce_spec))
+    {
+        free(data);
+        threadpool_destroy(pool , 0);
+        return -1;  
+    }
+    
 #ifdef PROFILE
     START_SW(map_time);
 #endif
@@ -86,28 +114,12 @@ int main(int argc, char *argv[])
 #ifdef PROFILE
     STOP_SW(map_time);
 #endif
-/*
-    //check data 
-    for (int i = 0; i < DATASIZE; i++)
-        printf("%c", !!data[i] ? '-' : ' ');
-    printf("\n");
-*/
+
 #ifdef PROFILE
     START_SW(reduce_time);
 #endif
 
-    threadpool_reduce_t reduce = {
-        .begin = data,
-        .end = data + DATASIZE,
-        .object_size = sizeof(*data),
-        .additional = NULL,
-        .reduce = my_reduce,
-        .reduce_alloc_neutral = my_alloc_neutral,
-        .reduce_finish = my_finish,
-        .reduce_free = my_free,
-    };
-
-    threadpool_reduce(pool, &reduce);
+    threadpool_reduce(pool);
 
 #ifdef PROFILE
     STOP_SW(reduce_time);
@@ -116,6 +128,8 @@ int main(int argc, char *argv[])
     fprintf(stderr, "[is_simple] Total time: %lf\n", GET_SEC(simple_time));
     fprintf(stderr, "[reduce] Total time: %lf\n", GET_SEC(reduce_time));
 #endif
+
+    fprintf(stdout , "reduce result = %d\n", my_result);
 
     assert(threadpool_destroy(pool , 0) == 0);
     free(data);
