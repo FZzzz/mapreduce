@@ -23,8 +23,8 @@ void is_simple(int n, void *_data)
     START_SW(simple_time);
 #endif
 
-    int *data = (int *) _data;
-    int x = data[n];
+    long *data = (long *) _data;
+    long x = data[n];
     data[n] = 0;
     if (x < 2) return;
     if ((x & ~3) && !(x & 1)) return;
@@ -40,19 +40,19 @@ void is_simple(int n, void *_data)
 
 void my_reduce(void *additional, void *result, void *data)
 {
-    *((int *) result) += *((int *) data);
+    *((long *) result) += *((long *) data);
 }
 
 void my_merge(void *additional , void *result , void *local)
 {
-    *((int *) result) += *((int *) local); 
+    *((long *) result) += *((long *) local); 
 }
 
 // FIXME: should be provided default by library
 // allocate 'local' space for reduce phase
 void *my_alloc_neutral(void *additional)
 {
-    int *c = malloc(sizeof(int));
+    int *c = malloc(sizeof(long));
     *c = 0;
     return c;
 }
@@ -62,12 +62,6 @@ void *my_alloc_neutral(void *additional)
 void my_free(void *additional, void *node)
 {
     free(node);
-}
-
-// managed by library
-void my_finish(void *additional, void *node)
-{
-    printf("reduce result = %d\n", *(int *) node);
 }
 
 int main(int argc, char *argv[])
@@ -80,7 +74,7 @@ int main(int argc, char *argv[])
             "queue size of %d\n", THREAD, QUEUE);
 
     //given datas
-    int *data = malloc(DATASIZE * sizeof(int));
+    long *data = malloc(DATASIZE * sizeof(long));
     for (int i = 0; i < DATASIZE; i++)
         data[i] = i + 1;
     //data end
